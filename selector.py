@@ -1,4 +1,4 @@
-# bms_selector_final.py
+# bms_selector_with_boq.py
 
 import pandas as pd
 import pulp
@@ -45,15 +45,14 @@ def find_optimal_controllers(panel_requirements, controllers_df):
 
     # --- EXTRACT RESULTS ---
     if pulp.LpStatus[prob.status] == 'Optimal':
-        total_cost = pulp.value(prob.objective)
         solution = {}
         for v in prob.variables():
             if v.varValue > 0 and v.name.startswith("Qty"):
                 controller_name = v.name.replace("Qty_", "").replace("_", " ")
                 solution[controller_name] = int(v.varValue)
-        return total_cost, solution
+        return solution
     else:
-        return None, None
+        return None
 
 # --- Main Script Execution ---
 if __name__ == "__main__":
@@ -65,47 +64,64 @@ if __name__ == "__main__":
         
         panels.set_index('PanelName', inplace=True)
         
-        # This list will store all the results before saving to CSV
         all_solutions = []
 
         for panel_name, requirements in panels.iterrows():
-            print("-" * 40)
             print(f"🔍 Solving for Panel: {panel_name}")
-            print(f"   Requirements -> DI: {requirements['DI']}, DO: {requirements['DO']}, AI: {requirements['AI']}, AO: {requirements['AO']}")
-            
-            cost, result = find_optimal_controllers(requirements, controllers)
+            result = find_optimal_controllers(requirements, controllers)
 
             if result:
                 print(f"✅ Optimal Solution Found!")
-                print(f"   Total Cost: ${cost:.2f}")
-                print("   Controller Bill of Materials:")
                 for controller, qty in result.items():
-                    print(f"     - {qty} x {controller}")
-                    # Add each controller row to our results list
                     all_solutions.append({
                         'PanelName': panel_name,
                         'ControllerName': controller,
-                        'Quantity': qty,
-                        'TotalPanelCost': cost
+                        'Quantity': qty
                     })
-                print("-" * 40 + "\n")
             else:
                 print(f"❌ No optimal solution could be found for {panel_name}.")
                 all_solutions.append({
                     'PanelName': panel_name,
                     'ControllerName': 'No Solution Found',
-                    'Quantity': 0,
-                    'TotalPanelCost': 0
+                    'Quantity': 0
                 })
-                print("-" * 40 + "\n")
         
-        # After the loop, convert the list of solutions to a DataFrame
-        if all_solutions:
+        if not all_solutions:
+            print("No solutions were found for any panels.")
+        else:
+            # --- GENERATE AND SAVE OUTPUTS ---
             solution_df = pd.DataFrame(all_solutions)
-            # Save the DataFrame to a CSV file
-            output_filename = 'panel_solutions.csv'
-            solution_df.to_csv(output_filename, index=False)
-            print(f"🎉 All panels processed. Results saved to '{output_filename}'.")
+
+            # 1. Create the Pivoted Panel Matrix Output
+            print("\nGenerating Pivoted Panel Matrix...")
+            pivoted_df = solution_df.pivot_table(
+                index='PanelName',
+                columns='ControllerName',
+                values='Quantity',
+                fill_value=0
+            )
+            pivoted_df['SUM'] = pivoted_df.sum(axis=1)
+            pivoted_output_filename = 'panel_matrix_solution.csv'
+            pivoted_df.to_csv(pivoted_output_filename)
+            print(f"📄 Pivoted matrix saved to '{pivoted_output_filename}'")
+
+            # 2. Create the Bill of Quantities (BOQ) Output
+            print("\nGenerating Project Bill of Quantities (BOQ)...")
+            boq_df = solution_df.groupby('ControllerName')['Quantity'].sum().reset_index()
+            # Merge with original controller data to get costs
+            boq_df = boq_df.merge(controllers, left_on='ControllerName', right_on='Name', how='left')
+            boq_df['TotalCost'] = boq_df['Quantity'] * boq_df['Cost']
+            boq_df = boq_df[['ControllerName', 'Quantity', 'Cost', 'TotalCost']] # Reorder columns
+            
+            # Add a Grand Total row
+            grand_total = boq_df['TotalCost'].sum()
+            boq_df.loc['Grand Total'] = pd.Series(boq_df['TotalCost'].sum(), index=['TotalCost'])
+
+            boq_output_filename = 'project_boq.csv'
+            boq_df.to_csv(boq_output_filename)
+            print(f"🧾 Project BOQ saved to '{boq_output_filename}'")
+
+            print(f"\n🎉 All panels processed successfully!")
 
     except FileNotFoundError as e:
         print(f"Error: {e}. Please make sure 'controllers.csv' and 'panels.csv' are in the same directory.")
