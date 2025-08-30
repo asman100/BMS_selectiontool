@@ -1,9 +1,12 @@
 ,ControllerName,Quantity,Cost,TotalCost
-0,No Solution Found,0.0,,
-1,mp c 15,5.0,,
-2,mp c 186,10.0,,
-3,mp c 36,43.0,,
-4,mp c24,10.0,,
-5,"rp c 12(8,4)",2.0,,
-6,"rp c12(8,3,1)",8.0,,
-Grand Total,,,,0.0
+0,AS-P-Server,1.0,650.09,650.09
+1,DO12,2.0,349.66,699.32
+2,No Solution Found,0.0,,
+3,UI8 & DO4,1.0,444.95,444.95
+4,mp c 15,4.0,,
+5,mp c 186,9.0,,
+6,mp c 36,43.0,,
+7,mp c24,10.0,,
+8,"rp c 12(8,4)",2.0,,
+9,"rp c12(8,3,1)",8.0,,
+Grand Total,,,,1794.3600000000001
