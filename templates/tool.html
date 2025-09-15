@@ -186,8 +186,10 @@
                     const options = appState.serverOptionsCache[panelName]; const selectedIndex = parseInt(selectedRadio.value);
                     const chosenOption = options[selectedIndex];
                     if (!isNaN(selectedIndex) && chosenOption) {
-                        if (chosenOption.type === 'AS-P') { chosenOption.components['AS-P-Server'] = 1; }
-                        appState.panelChoices[panelName] = chosenOption;
+                        // Create a deep copy to avoid mutating the cached data
+                        const chosenOptionCopy = JSON.parse(JSON.stringify(chosenOption));
+                        if (chosenOptionCopy.type === 'AS-P') { chosenOptionCopy.components['AS-P-Server'] = 1; }
+                        appState.panelChoices[panelName] = chosenOptionCopy;
                     }
                 } else { appState.panelChoices[panelName] = { components: { 'No Valid Server Solution': 0 } }; }
             }
