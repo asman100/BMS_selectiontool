@@ -4,6 +4,7 @@ import pandas as pd
 import pulp
 import io
 import os
+import math
 
 # --- Flask App and Login Configuration ---
 app = Flask(__name__)
@@ -15,8 +16,8 @@ login_manager.login_view = 'login' # Redirect to 'login' view if user is not aut
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Spare points multiplier (1.2 = 20% extra)
-SPARE_POINTS_MULTIPLIER = 1.2
+# Default spare points percentage (can be overridden by user input)
+DEFAULT_SPARE_POINTS_PERCENTAGE = 20
 
 # --- User Management ---
 # In a real-world application, this would be a database.
@@ -34,7 +35,11 @@ def load_user(user_id):
 
 # --- Helper Functions (find_optimal_combination, get_accessories_recursively) ---
 # These functions are unchanged from the previous version.
-def find_optimal_combination(panel_requirements, components_df):
+def find_optimal_combination(panel_requirements, components_df, spare_points_percentage=None):
+    if spare_points_percentage is None:
+        spare_points_percentage = DEFAULT_SPARE_POINTS_PERCENTAGE
+    spare_multiplier = 1 + (spare_points_percentage / 100)
+    
     prob = pulp.LpProblem(f"BMS_Combination_{panel_requirements['PanelName']}", pulp.LpMinimize)
     component_names = components_df['Name'].tolist(); component_qty_vars = pulp.LpVariable.dicts("Qty", component_names, lowBound=0, cat='Integer')
     components_map = components_df.set_index('Name').to_dict('index'); uio_as_input_vars = pulp.LpVariable.dicts("UIO_as_Input", component_names, lowBound=0, cat='Continuous')
@@ -43,7 +48,9 @@ def find_optimal_combination(panel_requirements, components_df):
     for name in component_names:
         available_uio = components_map[name].get('UIO', 0) * component_qty_vars[name]; safe_name = ''.join(e for e in name if e.isalnum())
         prob += uio_as_input_vars[name] + uio_as_output_vars[name] <= available_uio, f"UIO_Allocation_{safe_name}"
-    total_required_inputs = (panel_requirements.get('DI', 0) + panel_requirements.get('AI', 0)) * SPARE_POINTS_MULTIPLIER; total_required_outputs = (panel_requirements.get('DO', 0) + panel_requirements.get('AO', 0)) * SPARE_POINTS_MULTIPLIER
+    # Apply spare points and round up (no decimals)
+    total_required_inputs = math.ceil((panel_requirements.get('DI', 0) + panel_requirements.get('AI', 0)) * spare_multiplier)
+    total_required_outputs = math.ceil((panel_requirements.get('DO', 0) + panel_requirements.get('AO', 0)) * spare_multiplier)
     total_provided_inputs = pulp.lpSum([(components_map[name].get('DI', 0) + components_map[name].get('AI', 0) + components_map[name].get('UI', 0)) * component_qty_vars[name] for name in component_names]) + pulp.lpSum(uio_as_input_vars)
     total_provided_outputs = pulp.lpSum([(components_map[name].get('DO', 0) + components_map[name].get('AO', 0) + components_map[name].get('UO', 0)) * component_qty_vars[name] for name in component_names]) + pulp.lpSum(uio_as_output_vars)
     prob += total_provided_inputs >= total_required_inputs, "Total_Input_Requirement"; prob += total_provided_outputs >= total_required_outputs, "Total_Output_Requirement"
@@ -105,12 +112,14 @@ def get_panel_names():
 def calculate_options():
     servers = pd.read_csv(os.path.join(BASE_DIR, 'servers.csv')).fillna(0); server_modules = pd.read_csv(os.path.join(BASE_DIR, 'server_modules.csv')).fillna(0)
     accessories = pd.read_csv(os.path.join(BASE_DIR, 'accessories.csv')).fillna(0); data = request.json
-    panel_name = data.get('panel_name'); panels_df = app.config.get('PANELS_DF')
+    panel_name = data.get('panel_name'); spare_points_percentage = data.get('spare_points_percentage', DEFAULT_SPARE_POINTS_PERCENTAGE)
+    panels_df = app.config.get('PANELS_DF')
     if panels_df is None: return jsonify({"error": "Panels data not found. Please upload again."}), 400
     requirements = panels_df[panels_df['PanelName'] == panel_name].iloc[0].to_dict()
+    spare_multiplier = 1 + (spare_points_percentage / 100)
     asp_server = servers[servers['Name'].str.contains("AS-P", case=False)].iloc[0]; asb_servers = servers[servers['Name'].str.contains("AS-B", case=False)]
     options = []
-    module_cost, modules = find_optimal_combination(requirements, server_modules)
+    module_cost, modules = find_optimal_combination(requirements, server_modules, spare_points_percentage)
     if modules is not None:
         primary_components = [{'Name': asp_server['Name'], 'PartNumber': asp_server['PartNumber'], 'Quantity': 1, 'Cost': asp_server['Cost']}]
         for name, qty in modules.items():
@@ -120,7 +129,8 @@ def calculate_options():
         total_cost = asp_server['Cost'] + module_cost + acc_cost
         options.append({'type': 'AS-P', 'name': 'AS-P System', 'cost': total_cost, 'valid': True, 'components': modules})
     for _, asb in asb_servers.iterrows():
-        req_inputs=(requirements.get('DI',0)+requirements.get('AI',0))*SPARE_POINTS_MULTIPLIER; req_outputs=(requirements.get('DO',0)+requirements.get('AO',0))*SPARE_POINTS_MULTIPLIER
+        # Apply spare points and round up (no decimals)
+        req_inputs=math.ceil((requirements.get('DI',0)+requirements.get('AI',0))*spare_multiplier); req_outputs=math.ceil((requirements.get('DO',0)+requirements.get('AO',0))*spare_multiplier)
         total_req=req_inputs+req_outputs; total_avail=asb.get('DI',0)+asb.get('AI',0)+asb.get('UI',0)+asb.get('DO',0)+asb.get('AO',0)+asb.get('UO',0)+asb.get('UIO',0)
         max_in=asb.get('DI',0)+asb.get('AI',0)+asb.get('UI',0)+asb.get('UIO',0); max_out=asb.get('DO',0)+asb.get('AO',0)+asb.get('UO',0)+asb.get('UIO',0)
         if total_avail>=total_req and max_in>=req_inputs and max_out>=req_outputs:
@@ -134,14 +144,15 @@ def generate_reports():
     controllers = pd.read_csv(os.path.join(BASE_DIR, 'controllers.csv')).fillna(0); servers = pd.read_csv(os.path.join(BASE_DIR, 'servers.csv')).fillna(0)
     server_modules = pd.read_csv(os.path.join(BASE_DIR, 'server_modules.csv')).fillna(0); accessories = pd.read_csv(os.path.join(BASE_DIR, 'accessories.csv')).fillna(0)
     for df in [controllers, servers, server_modules]: df['Name'] = df['Name'].str.strip()
-    data = request.json; panel_choices = data.get('panel_choices'); standard_panels = data.get('standard_panels'); panels_df = app.config['PANELS_DF']
+    data = request.json; panel_choices = data.get('panel_choices'); standard_panels = data.get('standard_panels')
+    spare_points_percentage = data.get('spare_points_percentage', DEFAULT_SPARE_POINTS_PERCENTAGE); panels_df = app.config['PANELS_DF']
     all_solutions = []
     for panel_name, choice in panel_choices.items():
         if choice and choice.get('components'):
             for component, qty in choice['components'].items(): all_solutions.append({'PanelName': panel_name, 'ControllerName': component, 'Quantity': qty})
     for panel_name in standard_panels:
         requirements = panels_df[panels_df['PanelName'] == panel_name].iloc[0].to_dict()
-        _, result = find_optimal_combination(requirements, controllers)
+        _, result = find_optimal_combination(requirements, controllers, spare_points_percentage)
         if result:
             for component, qty in result.items(): all_solutions.append({'PanelName': panel_name, 'ControllerName': component, 'Quantity': qty})
         else: all_solutions.append({'PanelName': panel_name, 'ControllerName': 'No Solution Found', 'Quantity': 0})
