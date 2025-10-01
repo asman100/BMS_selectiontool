@@ -3,6 +3,9 @@
 import pandas as pd
 import pulp
 
+# Spare points multiplier (1.2 = 20% extra)
+SPARE_POINTS_MULTIPLIER = 1.2
+
 def find_optimal_combination(panel_requirements, components_df):
     """
     Solves for the most cost-effective combination of components (controllers or modules).
@@ -25,8 +28,8 @@ def find_optimal_combination(panel_requirements, components_df):
         available_uio = components_map[name]['UIO'] * component_qty_vars[name]
         prob += uio_as_input_vars[name] + uio_as_output_vars[name] <= available_uio, f"UIO_Allocation_{name.replace(' ', '_')}"
 
-    total_required_inputs = panel_requirements['DI'] + panel_requirements['AI']
-    total_required_outputs = panel_requirements['DO'] + panel_requirements['AO']
+    total_required_inputs = (panel_requirements['DI'] + panel_requirements['AI']) * SPARE_POINTS_MULTIPLIER
+    total_required_outputs = (panel_requirements['DO'] + panel_requirements['AO']) * SPARE_POINTS_MULTIPLIER
     
     total_provided_inputs = pulp.lpSum([(components_map[name]['DI'] + components_map[name]['AI'] + components_map[name]['UI']) * component_qty_vars[name] for name in component_names]) + pulp.lpSum(uio_as_input_vars)
     total_provided_outputs = pulp.lpSum([(components_map[name]['DO'] + components_map[name]['AO'] + components_map[name]['UO']) * component_qty_vars[name] for name in component_names]) + pulp.lpSum(uio_as_output_vars)
@@ -115,7 +118,7 @@ if __name__ == "__main__":
             else:
                 options.append({'type': 'AS-P', 'name': 'AS-P System', 'cost': float('inf'), 'valid': False})
             for index, asb in asb_servers.iterrows():
-                req_inputs = requirements['DI'] + requirements['AI']; req_outputs = requirements['DO'] + requirements['AO']
+                req_inputs = (requirements['DI'] + requirements['AI']) * SPARE_POINTS_MULTIPLIER; req_outputs = (requirements['DO'] + requirements['AO']) * SPARE_POINTS_MULTIPLIER
                 total_required_points = req_inputs + req_outputs
                 total_available_points = asb['DI'] + asb['AI'] + asb['UI'] + asb['DO'] + asb['AO'] + asb['UO'] + asb['UIO']
                 max_possible_inputs = asb['DI'] + asb['AI'] + asb['UI'] + asb['UIO']

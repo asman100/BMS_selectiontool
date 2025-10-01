@@ -15,6 +15,9 @@ login_manager.login_view = 'login' # Redirect to 'login' view if user is not aut
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Spare points multiplier (1.2 = 20% extra)
+SPARE_POINTS_MULTIPLIER = 1.2
+
 # --- User Management ---
 # In a real-world application, this would be a database.
 users = {'gila': {'password': 'BMS-gila22'}}
@@ -40,7 +43,7 @@ def find_optimal_combination(panel_requirements, components_df):
     for name in component_names:
         available_uio = components_map[name].get('UIO', 0) * component_qty_vars[name]; safe_name = ''.join(e for e in name if e.isalnum())
         prob += uio_as_input_vars[name] + uio_as_output_vars[name] <= available_uio, f"UIO_Allocation_{safe_name}"
-    total_required_inputs = panel_requirements.get('DI', 0) + panel_requirements.get('AI', 0); total_required_outputs = panel_requirements.get('DO', 0) + panel_requirements.get('AO', 0)
+    total_required_inputs = (panel_requirements.get('DI', 0) + panel_requirements.get('AI', 0)) * SPARE_POINTS_MULTIPLIER; total_required_outputs = (panel_requirements.get('DO', 0) + panel_requirements.get('AO', 0)) * SPARE_POINTS_MULTIPLIER
     total_provided_inputs = pulp.lpSum([(components_map[name].get('DI', 0) + components_map[name].get('AI', 0) + components_map[name].get('UI', 0)) * component_qty_vars[name] for name in component_names]) + pulp.lpSum(uio_as_input_vars)
     total_provided_outputs = pulp.lpSum([(components_map[name].get('DO', 0) + components_map[name].get('AO', 0) + components_map[name].get('UO', 0)) * component_qty_vars[name] for name in component_names]) + pulp.lpSum(uio_as_output_vars)
     prob += total_provided_inputs >= total_required_inputs, "Total_Input_Requirement"; prob += total_provided_outputs >= total_required_outputs, "Total_Output_Requirement"
@@ -117,7 +120,7 @@ def calculate_options():
         total_cost = asp_server['Cost'] + module_cost + acc_cost
         options.append({'type': 'AS-P', 'name': 'AS-P System', 'cost': total_cost, 'valid': True, 'components': modules})
     for _, asb in asb_servers.iterrows():
-        req_inputs=requirements.get('DI',0)+requirements.get('AI',0); req_outputs=requirements.get('DO',0)+requirements.get('AO',0)
+        req_inputs=(requirements.get('DI',0)+requirements.get('AI',0))*SPARE_POINTS_MULTIPLIER; req_outputs=(requirements.get('DO',0)+requirements.get('AO',0))*SPARE_POINTS_MULTIPLIER
         total_req=req_inputs+req_outputs; total_avail=asb.get('DI',0)+asb.get('AI',0)+asb.get('UI',0)+asb.get('DO',0)+asb.get('AO',0)+asb.get('UO',0)+asb.get('UIO',0)
         max_in=asb.get('DI',0)+asb.get('AI',0)+asb.get('UI',0)+asb.get('UIO',0); max_out=asb.get('DO',0)+asb.get('AO',0)+asb.get('UO',0)+asb.get('UIO',0)
         if total_avail>=total_req and max_in>=req_inputs and max_out>=req_outputs:
