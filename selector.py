@@ -2,11 +2,19 @@
 
 import pandas as pd
 import pulp
+import math
 
-def find_optimal_combination(panel_requirements, components_df):
+# Default spare points percentage (can be overridden by user input)
+DEFAULT_SPARE_POINTS_PERCENTAGE = 20
+
+def find_optimal_combination(panel_requirements, components_df, spare_points_percentage=None):
     """
     Solves for the most cost-effective combination of components (controllers or modules).
     """
+    if spare_points_percentage is None:
+        spare_points_percentage = DEFAULT_SPARE_POINTS_PERCENTAGE
+    spare_multiplier = 1 + (spare_points_percentage / 100)
+    
     prob = pulp.LpProblem(f"BMS_Combination_{panel_requirements.name}", pulp.LpMinimize)
     
     # Use the component name directly as the key, which is robust
@@ -25,14 +33,27 @@ def find_optimal_combination(panel_requirements, components_df):
         available_uio = components_map[name]['UIO'] * component_qty_vars[name]
         prob += uio_as_input_vars[name] + uio_as_output_vars[name] <= available_uio, f"UIO_Allocation_{name.replace(' ', '_')}"
 
-    total_required_inputs = panel_requirements['DI'] + panel_requirements['AI']
-    total_required_outputs = panel_requirements['DO'] + panel_requirements['AO']
+    # Apply spare points and round up (no decimals)
+    required_di = math.ceil(panel_requirements['DI'] * spare_multiplier)
+    required_do = math.ceil(panel_requirements['DO'] * spare_multiplier)
+    required_ai = math.ceil(panel_requirements['AI'] * spare_multiplier)
+    required_ao = math.ceil(panel_requirements['AO'] * spare_multiplier)
     
-    total_provided_inputs = pulp.lpSum([(components_map[name]['DI'] + components_map[name]['AI'] + components_map[name]['UI']) * component_qty_vars[name] for name in component_names]) + pulp.lpSum(uio_as_input_vars)
-    total_provided_outputs = pulp.lpSum([(components_map[name]['DO'] + components_map[name]['AO'] + components_map[name]['UO']) * component_qty_vars[name] for name in component_names]) + pulp.lpSum(uio_as_output_vars)
+    # Individual constraints for each point type (Digital and Analog separately)
+    provided_di = pulp.lpSum([components_map[name]['DI'] * component_qty_vars[name] for name in component_names])
+    provided_do = pulp.lpSum([components_map[name]['DO'] * component_qty_vars[name] for name in component_names])
+    provided_ai = pulp.lpSum([components_map[name]['AI'] * component_qty_vars[name] for name in component_names])
+    provided_ao = pulp.lpSum([components_map[name]['AO'] * component_qty_vars[name] for name in component_names])
     
-    prob += total_provided_inputs >= total_required_inputs, "Total_Input_Requirement"
-    prob += total_provided_outputs >= total_required_outputs, "Total_Output_Requirement"
+    # Universal inputs/outputs can be used for either digital or analog
+    provided_ui = pulp.lpSum([components_map[name]['UI'] * component_qty_vars[name] for name in component_names]) + pulp.lpSum(uio_as_input_vars)
+    provided_uo = pulp.lpSum([components_map[name]['UO'] * component_qty_vars[name] for name in component_names]) + pulp.lpSum(uio_as_output_vars)
+    
+    # Constraints: Each point type must be satisfied (with universal points available for any type)
+    prob += provided_di + provided_ui >= required_di, "Digital_Input_Requirement"
+    prob += provided_do + provided_uo >= required_do, "Digital_Output_Requirement"
+    prob += provided_ai + provided_ui >= required_ai, "Analog_Input_Requirement"
+    prob += provided_ao + provided_uo >= required_ao, "Analog_Output_Requirement"
     
     prob.solve(pulp.PULP_CBC_CMD(msg=0))
 
@@ -89,6 +110,10 @@ if __name__ == "__main__":
         project_name = project_name_raw.strip().replace(' ', '_')
         print(f"--> Project set to: {project_name}\n")
         
+        spare_points_input = input("Enter Spare Points Percentage (default 20%, press Enter for default):\n> ")
+        spare_points_percentage = int(spare_points_input) if spare_points_input.strip() else DEFAULT_SPARE_POINTS_PERCENTAGE
+        print(f"--> Spare points set to: {spare_points_percentage}%\n")
+        
         panel_names = panels['PanelName'].tolist()
         print("Available Panels:\n" + ", ".join(panel_names))
         user_input = input("\nEnter the names of panels to be Automation Servers (comma-separated):\n> ")
@@ -98,12 +123,13 @@ if __name__ == "__main__":
         panel_server_choices = {}
         asp_server = servers[servers['Name'].str.contains("AS-P", case=False)].iloc[0]
         asb_servers = servers[servers['Name'].str.contains("AS-B", case=False)]
+        spare_multiplier = 1 + (spare_points_percentage / 100)
         for panel_name in sorted(list(server_panel_names)):
             print("-" * 40)
             print(f"DECISION for Server Panel: {panel_name}")
             requirements = panels[panels['PanelName'] == panel_name].iloc[0]
             options = []
-            module_cost, modules = find_optimal_combination(requirements, server_modules)
+            module_cost, modules = find_optimal_combination(requirements, server_modules, spare_points_percentage)
             if modules is not None:
                 primary_components = [{'Name': asp_server['Name'], 'PartNumber': asp_server['PartNumber'], 'Quantity': 1, 'Cost': asp_server['Cost']}]
                 for name, qty in modules.items():
@@ -115,7 +141,8 @@ if __name__ == "__main__":
             else:
                 options.append({'type': 'AS-P', 'name': 'AS-P System', 'cost': float('inf'), 'valid': False})
             for index, asb in asb_servers.iterrows():
-                req_inputs = requirements['DI'] + requirements['AI']; req_outputs = requirements['DO'] + requirements['AO']
+                # Apply spare points and round up (no decimals)
+                req_inputs = math.ceil((requirements['DI'] + requirements['AI']) * spare_multiplier); req_outputs = math.ceil((requirements['DO'] + requirements['AO']) * spare_multiplier)
                 total_required_points = req_inputs + req_outputs
                 total_available_points = asb['DI'] + asb['AI'] + asb['UI'] + asb['DO'] + asb['AO'] + asb['UO'] + asb['UIO']
                 max_possible_inputs = asb['DI'] + asb['AI'] + asb['UI'] + asb['UIO']
@@ -147,7 +174,7 @@ if __name__ == "__main__":
                 for component, qty in panel_server_choices[panel_name].items():
                     all_solutions.append({'PanelName': panel_name, 'ControllerName': component.strip(), 'Quantity': qty})
             elif panel_name not in server_panel_names:
-                _, result = find_optimal_combination(row, controllers)
+                _, result = find_optimal_combination(row, controllers, spare_points_percentage)
                 if result:
                     for component, qty in result.items():
                         all_solutions.append({'PanelName': panel_name, 'ControllerName': component.strip(), 'Quantity': qty})

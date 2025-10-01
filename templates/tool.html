@@ -575,6 +575,11 @@
                     <label for="project-name">🏗️ Project Name</label>
                     <input type="text" id="project-name" placeholder="Enter your project name (e.g., Downtown Office Complex)">
                 </div>
+                <div class="form-group">
+                    <label for="spare-points-percentage">🔧 Spare Points Percentage</label>
+                    <input type="number" id="spare-points-percentage" placeholder="Enter spare points percentage (e.g., 20)" value="20" min="0" max="100" step="1">
+                    <p style="color: #6b7280; margin-top: 8px; font-size: 14px;">💡 Add extra capacity for future expansion (e.g., 20% means 10 points become 12 points)</p>
+                </div>
                 <div style="margin-top: 32px;">
                     <h3 style="font-size: 20px; font-weight: 600; color: #374151; margin-bottom: 16px;">🖥️ Select Server Panels</h3>
                     <p style="color: #6b7280; margin-bottom: 20px;">Choose panels that require automation server configurations:</p>
@@ -637,7 +642,7 @@
     </div>
 
     <script>
-        const appState = { projectName: '', serverPanelNames: new Set(), panelChoices: {}, finalReports: {}, serverOptionsCache: {} };
+        const appState = { projectName: '', serverPanelNames: new Set(), panelChoices: {}, finalReports: {}, serverOptionsCache: {}, sparePointsPercentage: 20 };
         const loader = document.getElementById('loader-overlay');
         const loaderText = document.getElementById('loader-text');
         
@@ -738,6 +743,7 @@
         
         async function startDecisionPhase() {
             appState.projectName = document.getElementById('project-name').value || 'Untitled_Project';
+            appState.sparePointsPercentage = parseInt(document.getElementById('spare-points-percentage').value) || 20;
             
             if (appState.serverPanelNames.size === 0) { 
                 generateFinalReports(); 
@@ -756,7 +762,7 @@
                         const response = await fetch('/calculate_options', { 
                             method: 'POST', 
                             headers: { 'Content-Type': 'application/json' }, 
-                            body: JSON.stringify({ panel_name: panelName }) 
+                            body: JSON.stringify({ panel_name: panelName, spare_points_percentage: appState.sparePointsPercentage }) 
                         });
                         const options = await response.json(); 
                         appState.serverOptionsCache[panelName] = options;
@@ -832,7 +838,7 @@
             const response = await fetch('/generate_reports', { 
                 method: 'POST', 
                 headers: { 'Content-Type': 'application/json' }, 
-                body: JSON.stringify({ panel_choices: appState.panelChoices, standard_panels: standardPanels }) 
+                body: JSON.stringify({ panel_choices: appState.panelChoices, standard_panels: standardPanels, spare_points_percentage: appState.sparePointsPercentage }) 
             });
             
             appState.finalReports = await response.json();
