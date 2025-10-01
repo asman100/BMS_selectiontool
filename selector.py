@@ -34,14 +34,26 @@ def find_optimal_combination(panel_requirements, components_df, spare_points_per
         prob += uio_as_input_vars[name] + uio_as_output_vars[name] <= available_uio, f"UIO_Allocation_{name.replace(' ', '_')}"
 
     # Apply spare points and round up (no decimals)
-    total_required_inputs = math.ceil((panel_requirements['DI'] + panel_requirements['AI']) * spare_multiplier)
-    total_required_outputs = math.ceil((panel_requirements['DO'] + panel_requirements['AO']) * spare_multiplier)
+    required_di = math.ceil(panel_requirements['DI'] * spare_multiplier)
+    required_do = math.ceil(panel_requirements['DO'] * spare_multiplier)
+    required_ai = math.ceil(panel_requirements['AI'] * spare_multiplier)
+    required_ao = math.ceil(panel_requirements['AO'] * spare_multiplier)
     
-    total_provided_inputs = pulp.lpSum([(components_map[name]['DI'] + components_map[name]['AI'] + components_map[name]['UI']) * component_qty_vars[name] for name in component_names]) + pulp.lpSum(uio_as_input_vars)
-    total_provided_outputs = pulp.lpSum([(components_map[name]['DO'] + components_map[name]['AO'] + components_map[name]['UO']) * component_qty_vars[name] for name in component_names]) + pulp.lpSum(uio_as_output_vars)
+    # Individual constraints for each point type (Digital and Analog separately)
+    provided_di = pulp.lpSum([components_map[name]['DI'] * component_qty_vars[name] for name in component_names])
+    provided_do = pulp.lpSum([components_map[name]['DO'] * component_qty_vars[name] for name in component_names])
+    provided_ai = pulp.lpSum([components_map[name]['AI'] * component_qty_vars[name] for name in component_names])
+    provided_ao = pulp.lpSum([components_map[name]['AO'] * component_qty_vars[name] for name in component_names])
     
-    prob += total_provided_inputs >= total_required_inputs, "Total_Input_Requirement"
-    prob += total_provided_outputs >= total_required_outputs, "Total_Output_Requirement"
+    # Universal inputs/outputs can be used for either digital or analog
+    provided_ui = pulp.lpSum([components_map[name]['UI'] * component_qty_vars[name] for name in component_names]) + pulp.lpSum(uio_as_input_vars)
+    provided_uo = pulp.lpSum([components_map[name]['UO'] * component_qty_vars[name] for name in component_names]) + pulp.lpSum(uio_as_output_vars)
+    
+    # Constraints: Each point type must be satisfied (with universal points available for any type)
+    prob += provided_di + provided_ui >= required_di, "Digital_Input_Requirement"
+    prob += provided_do + provided_uo >= required_do, "Digital_Output_Requirement"
+    prob += provided_ai + provided_ui >= required_ai, "Analog_Input_Requirement"
+    prob += provided_ao + provided_uo >= required_ao, "Analog_Output_Requirement"
     
     prob.solve(pulp.PULP_CBC_CMD(msg=0))
 
